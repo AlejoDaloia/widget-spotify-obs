@@ -3,8 +3,6 @@ import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import path from "path";
-import {  fileURLToPath } from 'url';
 
 dotenv.config();
 
@@ -20,29 +18,19 @@ const {
   SUPABASE_KEY
 } = process.env;
 
-// Supabase
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let access_token = null;
 let refresh_token = null;
-
-let cachedNowPlaying = {
-  playing: false
-};
+let cachedNowPlaying = { playing: false };
 
 let isPolling = false;
-
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-app.use(express.static(path.join(__dirname, "public")));
 
 // LOGIN
 app.get("/login", (req, res) => {
   const scope = "user-read-currently-playing";
 
-  const authUrl =
+  const url =
     "https://accounts.spotify.com/authorize?" +
     new URLSearchParams({
       response_type: "code",
@@ -51,7 +39,7 @@ app.get("/login", (req, res) => {
       redirect_uri: REDIRECT_URI
     });
 
-  res.redirect(authUrl);
+  res.redirect(url);
 });
 
 // CALLBACK
@@ -76,27 +64,24 @@ app.get("/callback", async (req, res) => {
       }
     );
 
-    const newAccess = tokenRes.data.access_token;
-    const newRefresh = tokenRes.data.refresh_token;
+    access_token = tokenRes.data.access_token;
+    refresh_token = tokenRes.data.refresh_token;
 
     await supabase.from("spotify_tokens").upsert({
       id: 1,
-      access_token: newAccess,
-      refresh_token: newRefresh,
+      access_token,
+      refresh_token,
       expires_at: Date.now() + tokenRes.data.expires_in * 1000
     });
 
-    access_token = newAccess;
-    refresh_token = newRefresh;
-
-    res.send("Autenticado! Ya podés cerrar esta pestaña.");
+    res.send("Autenticado ✔️");
   } catch (err) {
     console.error(err.response?.data || err.message);
-    res.status(500).send("Error en autenticación");
+    res.status(500).send("Error auth");
   }
 });
 
-// REFRESH TOKEN
+// REFRESH
 async function refreshAccessToken() {
   try {
     const res = await axios.post(
@@ -117,7 +102,6 @@ async function refreshAccessToken() {
 
     access_token = res.data.access_token;
 
-    // solo actualizar refresh_token si viene
     if (res.data.refresh_token) {
       refresh_token = res.data.refresh_token;
     }
@@ -127,84 +111,60 @@ async function refreshAccessToken() {
       .update({
         access_token,
         refresh_token,
-        expires_at: Date.now() + res.data.expires_in * 1000,
         updated_at: new Date()
       })
       .eq("id", 1);
+
   } catch (err) {
-    console.error("Error refrescando token:", err.response?.data || err.message);
+    console.error("Refresh error:", err.response?.data || err.message);
   }
 }
 
-// NOW PLAYING
-app.get("/now-playing", (req, res) => {
-  res.json(cachedNowPlaying);
-});
-
+// POLLING
 async function pollNowPlaying() {
   if (!access_token || isPolling) return;
-
   isPolling = true;
 
   try {
-    // refrescar si hace falta
-    const { data } = await supabase
-      .from("spotify_tokens")
-      .select("expires_at")
-      .eq("id", 1)
-      .single();
-
-    if (data && Date.now() > data.expires_at) {
-      await refreshAccessToken();
-    }
-
-    const response = await axios.get(
+    const res = await axios.get(
       "https://api.spotify.com/v1/me/player/currently-playing",
       {
-        headers: {
-          Authorization: `Bearer ${access_token}`
-        }
+        headers: { Authorization: `Bearer ${access_token}` }
       }
     );
 
-    if (
-      response.status === 204 ||
-      !response.data ||
-      !response.data.item
-    ) {
-      cachedNowPlaying = { 
-        ...cachedNowPlaying,
-        playing: false 
-      };
+    if (!res.data || !res.data.item) {
+      cachedNowPlaying = { playing: false };
+      isPolling = false;
+      return;
     } else {
-      const track = response.data.item;
+      const track = res.data.item;
 
       cachedNowPlaying = {
-        playing: response.data.is_playing,
+        playing: res.data.is_playing,
         title: track.name,
         artist: track.artists.map(a => a.name).join(", "),
         image: track.album.images?.[0]?.url,
-        progress: response.data.progress_ms,
+        progress: res.data.progress_ms,
         duration: track.duration_ms
       };
     }
-    if (!response.data.item) {
-      console.log("No hay track activo");
-    }
-
   } catch (err) {
     if (err.response?.status === 401) {
       await refreshAccessToken();
-    } else {
-      console.error("Polling error:", err.response?.data || err.message);
     }
   }
 
   isPolling = false;
 }
 
-// Cargar tokens al iniciar
-async function loadTokens() {
+// ENDPOINT
+app.get("/now-playing", (req, res) => {
+  res.json(cachedNowPlaying);
+});
+
+// INIT
+async function start() {
   const { data, error } = await supabase
     .from("spotify_tokens")
     .select("*")
@@ -212,28 +172,16 @@ async function loadTokens() {
     .maybeSingle();
 
   if (error) {
-    console.error("Error cargando tokens:", error);
-    return;
-  }
-
-  if (data) {
+    console.error("Error fetching Spotify tokens:", error);
+  } else if (data) {
     access_token = data.access_token;
     refresh_token = data.refresh_token;
   }
-}
 
-function startPolling() {
   setInterval(pollNowPlaying, 2000);
-}
-
-// Init
-async function start() {
-  await loadTokens();
-  await pollNowPlaying(); // obtener estado inicial
-  startPolling();
 
   app.listen(PORT, () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`Running on ${PORT}`);
   });
 }
 
