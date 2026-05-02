@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Spotify Widget</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    :root {
+      --accent: rgb(255,255,255);
+    }
+
+    body {
+      background: transparent;
+      overflow: hidden;
+    }
+
+    #widget {
+      transform: translateY(0);
+      opacity: 1;
+      transition: all 0.4s ease;
+      position: relative;
+    }
+
+    /* 🎨 FONDO DINÁMICO */
+    #widget::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 1rem;
+      background: radial-gradient(circle at 20% 50%, var(--accent), transparent 70%);
+      opacity: 0.25;
+      filter: blur(40px);
+      z-index: 0;
+      transition: background 0.6s ease;
+    }
+
+    /* contenido encima */
+    #widget > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .animate-in {
+      transform: translateY(20px);
+      opacity: 0;
+    }
+
+    /* 🎵 PROGRESS BAR */
+    .progress-bar {
+      height: 3px;
+      width: 0;
+      border-radius: 999px;
+      transition: width 0.1s linear;
+
+      background: linear-gradient(90deg, var(--accent), white);
+
+      box-shadow:
+        0 0 8px var(--accent),
+        0 0 16px var(--accent),
+        0 0 24px var(--accent);
+    }
+
+    /* 🎬 SCROLL TEXTO */
+    @keyframes scrollText {
+      0% { transform: translateX(0%); }
+      100% { transform: translateX(-50%); }
+    }
+
+    .marquee {
+      display: inline-block;
+      padding-right: 50px;
+      animation: scrollText 12s linear infinite alternate;
+      animation-delay: 2s;
+    }
+  </style>
+</head>
+<body>
+
+<div id="widget"
+     class="flex items-center gap-4 px-5 py-3 rounded-2xl bg-black/60 backdrop-blur-xl text-white shadow-2xl w-[420px]">
+
+  <!-- Cover -->
+  <div class="relative">
+    <img id="cover" class="w-16 h-16 rounded-xl shadow-lg object-cover" />
+    <div id="glow" class="absolute inset-0 rounded-xl blur-xl opacity-40"></div>
+  </div>
+
+  <!-- Info -->
+  <div class="flex flex-col flex-1 overflow-hidden">
+
+    <div class="overflow-hidden w-full">
+      <p id="title" class="font-bold text-lg whitespace-nowrap"></p>
+    </div>
+
+    <div class="overflow-hidden w-full">
+      <p id="artist" class="text-sm text-gray-300 whitespace-nowrap"></p>
+    </div>
+
+    <div class="w-full bg-white/10 mt-2 rounded-full overflow-hidden">
+      <div id="progress" class="progress-bar"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const widget = document.getElementById("widget");
+const cover = document.getElementById("cover");
+const title = document.getElementById("title");
+const artist = document.getElementById("artist");
+const glow = document.getElementById("glow");
+const progress = document.getElementById("progress");
+
+let lastTrack = null;
+let progressInterval = null;
+
+// 🎨 COLOR DINÁMICO
+function extractColor(imgUrl) {
+  const img = new Image();
+  img.crossOrigin = "Anonymous";
+  img.src = imgUrl;
+
+  img.onload = () => {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    canvas.width = img.width;
+    canvas.height = img.height;
+
+    ctx.drawImage(img, 0, 0);
+
+    const data = ctx.getImageData(0, 0, 1, 1).data;
+    const color = `rgb(${data[0]}, ${data[1]}, ${data[2]})`;
+
+    // glow cover
+    glow.style.background = color;
+
+    // color global
+    document.documentElement.style.setProperty("--accent", color);
+  };
+}
+
+// 📊 PROGRESS
+function startProgress(duration, progressMs) {
+  clearInterval(progressInterval);
+
+  const startTime = Date.now();
+
+  function update() {
+    const now = Date.now();
+    const elapsed = now - startTime;
+
+    const currentProgress = progressMs + elapsed;
+    const percent = Math.min((currentProgress / duration) * 100, 100);
+
+    progress.style.width = percent + "%";
+
+    if (percent >= 100) {
+      clearInterval(progressInterval);
+    }
+  }
+
+  update();
+  progressInterval = setInterval(update, 16);
+}
+
+// 🎬 MARQUEE
+function applyMarquee(el) {
+  const parent = el.parentElement;
+
+  el.classList.remove("marquee");
+
+  if (el.scrollWidth > parent.clientWidth) {
+    el.classList.add("marquee");
+  }
+}
+
+// 🔄 UPDATE
+async function update() {
+  try {
+    const res = await fetch("http://localhost:3000/now-playing");
+    const data = await res.json();
+
+    if (!data.playing) {
+      title.textContent = "No hay música";
+      artist.textContent = "";
+      progress.style.width = "0%";
+      return;
+    }
+
+    const currentTrack = data.title + data.artist;
+
+    if (currentTrack !== lastTrack) {
+      lastTrack = currentTrack;
+
+      widget.classList.add("animate-in");
+
+      setTimeout(() => {
+        cover.src = data.image;
+        title.textContent = data.title;
+        artist.textContent = data.artist;
+
+        extractColor(data.image);
+
+        if (data.duration && data.progress != null) {
+          startProgress(data.duration, data.progress);
+        }
+
+        widget.classList.remove("animate-in");
+
+        setTimeout(() => {
+          applyMarquee(title);
+          applyMarquee(artist);
+        }, 100);
+
+      }, 200);
+    }
+
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+setInterval(update, 2000);
+update();
+</script>
+
+</body>
+</html>
