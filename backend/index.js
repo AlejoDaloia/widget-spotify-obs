@@ -18,6 +18,15 @@ const {
   SUPABASE_KEY
 } = process.env;
 
+// Validar variables requeridas
+const required = ['CLIENT_ID', 'CLIENT_SECRET', 'REDIRECT_URI', 'SUPABASE_URL', 'SUPABASE_KEY'];
+const missing = required.filter(key => !process.env[key]);
+
+if (missing.length > 0) {
+  console.error('❌ Variables de entorno faltantes:', missing.join(', '));
+  process.exit(1);
+}
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let access_token = null;
